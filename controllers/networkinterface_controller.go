@@ -153,6 +153,25 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 					return ctrl.Result{}, err
 				}
 				log.Info(fmt.Sprintf("Patched IP + CIDR %+v %+v", ip, nic.Status))
+
+				log.Info("Double checking network interface..")
+				err := r.Client.Get(ctx, req.NamespacedName, nic)
+				if err != nil {
+					log.Error(err, "could not find object")
+					return ctrl.Result{}, client.IgnoreNotFound(err)
+				}
+
+				if len(nic.Status.Address) == 0 {
+					log.Info("Releasing IP as it was not properly patched.")
+
+					ipamErr := r.IPAM.ReleaseIPFromPrefix(chosenCidr, ip.IP.String())
+					if ipamErr != nil {
+						log.Error(ipamErr, fmt.Sprintf("failed to release IP %s", ip.IP.String()))
+					}
+					return ctrl.Result{}, fmt.Errorf("failed to assign IP to %s", nic.Name)
+				}
+
+				log.Info(fmt.Sprintf("Double checked network interface to be %+v", nic.Status))
 			default:
 				return ctrl.Result{}, fmt.Errorf("IPAM type %s is not supported", pn.Spec.IPAM.Type)
 			}
