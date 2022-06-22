@@ -213,20 +213,25 @@ func (r *PrivateNetworkReconciler) Reconcile(req ctrl.Request) (ctrl.Result, err
 				return ctrl.Result{RequeueAfter: RequeueDuration}, err
 			}
 
+
 			nic.Spec.ID = privateNIC.ID
+			log.Info(fmt.Sprintf("Build and saving new NetworkInterface %s %+v", nic.Name, nic.Status))
 			err = r.Client.Create(ctx, nic)
 			if err != nil {
 				log.Error(err, "could not create networkInterface")
 				return ctrl.Result{RequeueAfter: RequeueDuration}, err
 			}
+			log.Info(fmt.Sprintf("Saved new NetworkInterface %s %+v", nic.Name, nic.Status))
 			patch := client.MergeFrom(nic.DeepCopy())
 			nic.Status.MacAddress = privateNIC.MacAddress
+			log.Info(fmt.Sprintf("Patching new NetworkInterface %s %+v", nic.Name, nic.Status))
 			err = r.Client.Status().Patch(ctx, nic, patch)
 			if err != nil {
 				log.Error(err, "could not patch networkInterface status")
 				return ctrl.Result{RequeueAfter: RequeueDuration}, err
 			}
-			log.Info(fmt.Sprintf("Successfully created networkInterface %s on node %s", nic.Name, node.Name))
+			log.Info(fmt.Sprintf("Patched new NetworkInterface %s %+v", nic.Name, nic.Status))
+			log.Info(fmt.Sprintf("Successfully created networkInterface %s on node %s (new)", nic.Name, node.Name))
 		}
 	}
 
@@ -391,7 +396,7 @@ func (r *PrivateNetworkReconciler) ReconcileDeprecated(req ctrl.Request) (ctrl.R
 				log.Error(err, "could not patch networkInterface status")
 				return ctrl.Result{RequeueAfter: RequeueDuration}, err
 			}
-			log.Info(fmt.Sprintf("Successfully created networkInterface %s on node %s", nic.Name, node.Name))
+			log.Info(fmt.Sprintf("Successfully created networkInterface %s on node %s (deprecated)", nic.Name, node.Name))
 		}
 	}
 
