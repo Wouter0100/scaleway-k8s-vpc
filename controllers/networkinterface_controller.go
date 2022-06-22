@@ -63,11 +63,14 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 
 	nic := &vpcv1alpha1.NetworkInterface{}
 
+	log.Info("Getting network interface")
 	err := r.Client.Get(ctx, req.NamespacedName, nic)
 	if err != nil {
 		log.Error(err, "could not find object")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	log.Info(fmt.Sprintf("Got network interface %+v", nic.Status))
 
 	node := corev1.Node{}
 	err = r.Client.Get(ctx, types.NamespacedName{Name: nic.Spec.NodeName}, &node)
@@ -116,11 +119,13 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 						log.Error(err, "error creating new prefix")
 						continue
 					}
+					log.Info("AcquireIP")
 					ip, err = r.IPAM.AcquireIP(prefix.Cidr)
 					if err != nil {
 						log.Error(err, fmt.Sprintf("error acquiring ip for cidr %s", prefix.Cidr))
 						continue
 					}
+					log.Info(fmt.Sprintf("got IP %+v", ip))
 					chosenCidr = prefix.Cidr
 					break
 				}
@@ -135,6 +140,9 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 				patch := client.MergeFrom(nic.DeepCopy())
 				nic.Status.Address = ip.IP.String() + "/" + strings.Split(pn.Spec.IPAM.Static.CIDR, "/")[1]
 				nic.Status.ParentCIDR = chosenCidr
+				log.Info(fmt.Sprintf("Patching IP + CIDR %+v", ip))
+				change, _ := patch.Data(nic)
+				log.Info(fmt.Sprintf("%s", change))
 				err = r.Client.Status().Patch(ctx, nic, patch)
 				if err != nil {
 					ipamErr := r.IPAM.ReleaseIPFromPrefix(chosenCidr, strings.Split(nic.Status.Address, "/")[0])
@@ -144,6 +152,7 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 					log.Error(err, fmt.Sprintf("failed to update networkInterface %s", nic.Name))
 					return ctrl.Result{}, err
 				}
+				log.Info(fmt.Sprintf("Patched IP + CIDR %+v %+v", ip, nic.Status))
 			default:
 				return ctrl.Result{}, fmt.Errorf("IPAM type %s is not supported", pn.Spec.IPAM.Type)
 			}
@@ -165,8 +174,15 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 		//return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 
+	r.Log.Info("Checking if Finalizer is present..")
+
 	if !controllerutil.ContainsFinalizer(nic, constants.FinalizerName) {
+		r.Log.Info("Finalizer not present on nic. Removing.")
+		r.Log.Info(fmt.Sprintf("%+v %+v", pn.Spec.IPAM, pn.Spec.IPAM.Type))
+
 		if pn.Spec.IPAM != nil && pn.Spec.IPAM.Type == vpcv1alpha1.IPAMTypeStatic {
+			r.Log.Info("Going into releasing IPv4 address..")
+
 			if pn.Spec.IPAM.Static == nil {
 				return ctrl.Result{}, fmt.Errorf("Static CIDR can't be empty on static ipam mode")
 			}
@@ -175,14 +191,19 @@ func (r *NetworkInterfaceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, e
 			if nic.Status.ParentCIDR != "" {
 				cidr = nic.Status.ParentCIDR
 			}
+			r.Log.Info("Releasing IPv4 address..")
+			r.Log.Info(fmt.Sprintf("%+v %+v", cidr, nic.Status.Address))
 			err := r.IPAM.ReleaseIPFromPrefix(cidr, strings.Split(nic.Status.Address, "/")[0])
 			if err != nil {
+				r.Log.Info("Error while releasing IPv4 address..")
 				if !errors.As(err, &goipam.NotFoundError{}) {
 					log.Error(err, fmt.Sprintf("could not delete IP %s from prefix %s", nic.Status.Address, cidr))
 					return ctrl.Result{}, err
 				}
 			}
+			r.Log.Info("Finished releasing IPv4 address..")
 		}
+		r.Log.Info("Continuing code after releasing IPv4 address..")
 		node := corev1.Node{}
 		err := r.Client.Get(ctx, types.NamespacedName{Name: nic.Spec.NodeName}, &node)
 		if err != nil && !apierrors.IsNotFound(err) {
